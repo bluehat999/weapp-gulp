@@ -1,0 +1,22 @@
+{
+  "name": "gulpmini",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "del": "^4.1.1",
+    "gulp": "^4.0.2",
+    "gulp-eslint": "^5.0.0",
+    "gulp-notify": "^3.2.0",
+    "gulp-plumber": "^1.2.1",
+    "gulp-rename": "^1.4.0",
+    "gulp-replace": "^1.0.0",
+    "gulp-sass": "^4.0.2",
+    "minimist": "^1.2.0"
+  }
+}
