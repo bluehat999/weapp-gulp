@@ -2,18 +2,20 @@ const fs = require('fs')
 const gulp = require('gulp')
 const plumber = require('gulp-plumber')
 // const newer = require('gulp-newer')
-// const clean = require('gulp-clean')
+const clean = require('gulp-clean')
 // const zip = require('gulp-zip')
-const del = require('del')
 const rename = require('gulp-rename')
 const replace = require('gulp-replace')
 // const imagemin = require('gulp-imagemin')
 // const pngquant = require('gulp-pngquant')
 const notify = require('gulp-notify');
 // const eslint = require('gulp-eslint')
+const babel = require('gulp-babel');
+const tap = require('gulp-tap')
+const path = require('path')
 const sass = require('gulp-sass')
 const minimist = require('minimist')
-// tnpm i -S gulp gulp-plumber del gulp-rename gulp-notify gulp-sass minimist gulp-eslint gulp-imagemin
+
 const onError = function (err) {
     notify.onError({
         title: "Gulp",
@@ -30,13 +32,48 @@ const SRC = './src/**/'
 const DIST = './dist/'
 
 const WXML = [`${SRC}*.wxml`, `!${SRC}_template/*.wxml`]
-const SASS = [`${SRC}*.{scss,wxss}`, `!${SRC}_template/*.{sass,scss,wxss}`]
+const SASS = [`${SRC}*.{scss,scss,wxss}`, `!${SRC}_template/*.{sass,scss,wxss}`,`!./src/node_modules/**/*.{sass,scss,wxss}`]
 const _JSON = [`${SRC}*.json`, `!${SRC}_template/*.json`]
 const JS = [`${SRC}*.js`, `!${SRC}_template/*.js`]
 const WXS = [`${SRC}*.wxs`, `!${SRC}_template/*.wxs`]
-const IMG = [`${SRC}assets/images/*.{png,jpg,ico}`, `${SRC}assets/image/*.{png,jpg,ico}`]
+const IMG = [`${SRC}*.{png,jpg,ico,svg,gif}`]
+//存放variable和mixin的sass文件在被引用时直接导入，不引入dist目录中
+const DIRECTIMPORT = ['styles', 'font']
+
+/* 处理lodash与微信小程序配置不兼容问题 */
+const wxappLodash = () => {
+    const wxappNPM = 'miniprogram_npm/'
+    const lodashFile = `${DIST}${wxappNPM}lodash/index.js`
+    const oldRoot = "var root = freeGlobal || freeSelf || Function('return this')();"
+    const newRoot = `/**${oldRoot}**/ var root = {
+        Array: Array,
+        Date: Date,
+        Error: Error,
+        Function: Function,
+        Math: Math,
+        Object: Object,
+        RegExp: RegExp,
+        String: String,
+        TypeError: TypeError,
+        setTimeout: setTimeout,
+        clearTimeout: clearTimeout,
+        setInterval: setInterval,
+        clearInterval: clearInterval
+      };`
+    fs.exists(lodashFile, (ex) => {
+        if (ex) {
+            return gulp.src(lodashFile)
+                .pipe(replace(oldRoot,newRoot))
+                .pipe(gulp.dest(lodashFile))
+        }
+    })
+}
+gulp.task('lodash',wxappLodash)
+
+
 
 /* 处理文件和图片 */
+
 const f_wxml = done => {
     return gulp.src(WXML, { since: gulp.lastRun(f_wxml) })
         .pipe(plumber({ errorHandler: onError }))
@@ -45,20 +82,23 @@ const f_wxml = done => {
 gulp.task('wxml', f_wxml)
 
 const f_sass = done => {
-    const regImport = /@import\s['|"](.+)(sass|scss|wxss)['|"];/g
-    const regRImport = /\/*@import\s['|"](.+)[sass|scss|wxss]['|"];*\//g
-    return gulp.src(SASS, { since: gulp.lastRun(f_sass) })
+    return gulp.src([...SASS,...DIRECTIMPORT.map(item => `!${SRC}${item}/**/*`)], 
+                    { since: gulp.lastRun(f_sass) ,allowEmpty:true})
         .pipe(plumber({ errorHandler: onError }))
-        // .pipe(replace(regImport,($1) =>
-        // {   console.log($1)
-        //     return `\/*${$1}*\/` }))
+        .pipe(tap((file) => {
+            const filePath = path.dirname(file.path);
+            file.contents = new Buffer(
+                String(file.contents)
+                .replace(/@import\s+['|"](.+)['|"];/g, ($1, $2) => {
+                    const imPath = path.resolve(filePath + '/' + $2)    
+                    return DIRECTIMPORT.some( item => { return imPath.indexOf(item) > -1} ) ? $1 : `/** ${$1} **/`
+            })
+            )
+        }))
         .pipe(sass())
+        .pipe(replace(/(\/\*\*\s{0,})(@.+)(\s{0,}\*\*\/)/g, ($1, $2, $3) => $3.replace(/\.scss/g, '.wxss')))
         .pipe(rename({ extname: '.wxss' }))
-        //.pipe(replace(/[\.scss|\.sass|\.wxss]/g,'.wxss'))        //修改引用时的后缀
-        // .pipe(replace(regRImport,($1) => {
-        //     console.log("@@@@@@@@@",$1)
-        //     return $1.slice(2,$1.length-2)
-        // }))     
+        // .pipe()
         .pipe(gulp.dest(DIST))
 }
 gulp.task('sass', f_sass)
@@ -70,9 +110,41 @@ const f_json = done => {
 }
 gulp.task('json', f_json)
 
+//处理原有项目中js里的的一些alias
+const replaceAlias = (fileContent,filePath) => {
+    const aliasWords = ['utils', 'config'] //alias的路径是相对SRCROOT的路径
+    fileContent && aliasWords.forEach(item => {
+        fileContent = fileContent.replace(new RegExp(`from\\s('|")((${item})\/\\S*)('|")`,'g'),($1,$2,$3,$4) => {
+            let absolute = path.resolve(__dirname, `\.\\${SRCROOT}\\${$3}`) 
+            let relative = path.relative(filePath, absolute).replace(/\\/g,'/')
+            relative = relative.startsWith('.')?relative:'./'+relative
+            return `from '${relative}'`
+        })
+    })
+    return fileContent
+}
 const f_js = done => {
     return gulp.src(JS, { since: gulp.lastRun(f_js) })
         .pipe(plumber({ errorHandler: onError }))
+        .pipe(tap((file) => {
+            const filePath = path.dirname(file.path);
+            const filter = ['node_modules']
+
+            if (file.basename=='runtime.js' ||!file.contents || filter.some(item =>{
+                return filePath.indexOf(item) != -1 
+            })) return
+
+            //处理微信小程序不支持async await 的问题
+            let absoluteAsync = path.resolve(__dirname, `\.\\${SRCROOT}\\utils\\runtime.js`)
+            let relativeAsync = path.relative(filePath, absoluteAsync)
+            let importAsync = (relativeAsync.startsWith('.')?relativeAsync:'./'+relativeAsync).replace(/\\/g,'/')
+            importAsync = `import regeneratorRuntime from '${importAsync}';\r\n`
+            let content = String(file.contents)
+            content =  (content.indexOf('async')>-1||content.indexOf('await')>-1) ? importAsync+content : content 
+            //处理原有项目中的一些alias
+            // console.log(replaceAlias(content,filePath).slice(0,100))
+            file.contents = new Buffer( replaceAlias(content,filePath) )          
+        }))
         // .pipe(eslint())
         // .pipe(eslint.format())
         .pipe(gulp.dest(DIST))
@@ -82,6 +154,10 @@ gulp.task('js', f_js)
 const f_wxs = done => {
     return gulp.src(WXS, { since: gulp.lastRun(f_wxs) })
         .pipe(plumber({ errorHandler: onError }))
+        .pipe(babel({//处理原生微信小程序wxs基于ES5
+            presets: ['@babel/preset-env']
+        }))
+        .pipe(rename({ extname: '.wxs' }))
         .pipe(gulp.dest(DIST))
 }
 gulp.task('wxs', f_wxs)
@@ -103,10 +179,7 @@ const f_img = done => {
 gulp.task('img', f_img)
 
 /* 清除dist目录 */
-gulp.task('clean', done => {
-    del.sync(DIST + '**/*')
-    done()
-})
+gulp.task('clean', done => gulp.src([DIST + '*', `!${DIST}miniprogram_npm`], { read: false, allowEmpty: true }).pipe(clean()))
 
 /* zip */
 
@@ -122,7 +195,7 @@ gulp.task('watch', done => {
 
 gulp.task('build', gulp.series('clean', gulp.parallel('wxml', 'json', 'sass', 'js', 'wxs', 'img')))
 
-gulp.task('dev', gulp.series(gulp.parallel('wxml', 'json', 'sass', 'js', 'wxs', 'img'), 'watch'))
+gulp.task('dev', gulp.series('clean', gulp.parallel('wxml', 'json', 'sass', 'js', 'wxs', 'img'), 'watch'))
 
 //使用模板新建component或者page
 gulp.task('new', done => {
@@ -182,3 +255,4 @@ gulp.task('new', done => {
     }
     return stream.pipe(gulp.dest(Path))
 })
+
