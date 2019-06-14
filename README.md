@@ -14,7 +14,7 @@
 
   项目地址：https://github.com/bluehat999/weapp-gulp
 
-  文章地址：
+  文章地址：https://www.cnblogs.com/mthz/p/weapp-gulp.html
 
 
 
