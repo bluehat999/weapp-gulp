@@ -1,20 +1,30 @@
 const fs = require('fs')
 const gulp = require('gulp')
 const plumber = require('gulp-plumber')
-// const newer = require('gulp-newer')
 const clean = require('gulp-clean')
-// const zip = require('gulp-zip')
 const rename = require('gulp-rename')
 const replace = require('gulp-replace')
-// const imagemin = require('gulp-imagemin')
-// const pngquant = require('gulp-pngquant')
 const notify = require('gulp-notify');
-// const eslint = require('gulp-eslint')
 const babel = require('gulp-babel');
 const tap = require('gulp-tap')
 const path = require('path')
 const sass = require('gulp-sass')
 const minimist = require('minimist')
+
+const SRCROOT = 'src'
+const SRC = './src/**/'
+const DIST = './dist/'
+
+const WXML = [`${SRC}*.wxml`]
+const SASS = [`${SRC}*.{scss,scss,wxss}`]
+const _JSON = [`${SRC}*.json`]
+const JS = [`${SRC}*.js`]
+const WXS = [`${SRC}*.wxs`]
+const IMG = [`${SRC}*.{png,jpg,ico,svg,gif}`]
+const CLEAN = [DIST + '*', `!${DIST}miniprogram_npm`, `!${DIST}node_modules`]
+//存放variable和mixin的sass文件在被引用时直接导入，不引入dist目录中
+const DIRECTIMPORT = ['styles', 'font']
+const aliasWords = ['utils', 'config'] //alias的路径是相对SRCROOT的路径
 
 const onError = function (err) {
     notify.onError({
@@ -27,21 +37,8 @@ const onError = function (err) {
     this.emit('end');
 };
 
-const SRCROOT = 'src'
-const SRC = './src/**/'
-const DIST = './dist/'
-
-const WXML = [`${SRC}*.wxml`, `!${SRC}_template/*.wxml`]
-const SASS = [`${SRC}*.{scss,scss,wxss}`, `!${SRC}_template/*.{sass,scss,wxss}`,`!./src/node_modules/**/*.{sass,scss,wxss}`]
-const _JSON = [`${SRC}*.json`, `!${SRC}_template/*.json`]
-const JS = [`${SRC}*.js`, `!${SRC}_template/*.js`]
-const WXS = [`${SRC}*.wxs`, `!${SRC}_template/*.wxs`]
-const IMG = [`${SRC}*.{png,jpg,ico,svg,gif}`]
-//存放variable和mixin的sass文件在被引用时直接导入，不引入dist目录中
-const DIRECTIMPORT = ['styles', 'font']
-
 /* 处理lodash与微信小程序配置不兼容问题 */
-const wxappLodash = () => {
+const wxappLodash = (done) => {
     const wxappNPM = 'miniprogram_npm/'
     const lodashFile = `${DIST}${wxappNPM}lodash/index.js`
     const oldRoot = "var root = freeGlobal || freeSelf || Function('return this')();"
@@ -62,15 +59,23 @@ const wxappLodash = () => {
       };`
     fs.exists(lodashFile, (ex) => {
         if (ex) {
-            return gulp.src(lodashFile)
-                .pipe(replace(oldRoot,newRoot))
-                .pipe(gulp.dest(lodashFile))
+            const lodash = gulp.src(lodashFile).pipe(tap(file => {
+                file.contents = new Buffer(String(file.contents).replace(oldRoot,newRoot))
+            })).pipe(gulp.dest(lodashFile.replace('index.js','')))
         }
     })
+    done()
 }
 gulp.task('lodash',wxappLodash)
 
-
+const wxappModules = () =>{
+    const modules = ['./node_modules/**/*','./package.json']
+    gulp.src([`${DIST}node_modules`,`${DIST}package.json`], { read: false, allowEmpty: true }).pipe(clean())
+    return gulp.src(modules, { since: gulp.lastRun(wxappModules) })
+    .pipe(plumber({ errorHandler: onError }))
+    .pipe(gulp.dest(DIST+'/node_modules'))
+}
+gulp.task('modules',gulp.series(wxappModules))
 
 /* 处理文件和图片 */
 
@@ -98,7 +103,6 @@ const f_sass = done => {
         .pipe(sass())
         .pipe(replace(/(\/\*\*\s{0,})(@.+)(\s{0,}\*\*\/)/g, ($1, $2, $3) => $3.replace(/\.scss/g, '.wxss')))
         .pipe(rename({ extname: '.wxss' }))
-        // .pipe()
         .pipe(gulp.dest(DIST))
 }
 gulp.task('sass', f_sass)
@@ -112,7 +116,6 @@ gulp.task('json', f_json)
 
 //处理原有项目中js里的的一些alias
 const replaceAlias = (fileContent,filePath) => {
-    const aliasWords = ['utils', 'config'] //alias的路径是相对SRCROOT的路径
     fileContent && aliasWords.forEach(item => {
         fileContent = fileContent.replace(new RegExp(`from\\s('|")((${item})\/\\S*)('|")`,'g'),($1,$2,$3,$4) => {
             let absolute = path.resolve(__dirname, `\.\\${SRCROOT}\\${$3}`) 
@@ -142,11 +145,8 @@ const f_js = done => {
             let content = String(file.contents)
             content =  (content.indexOf('async')>-1||content.indexOf('await')>-1) ? importAsync+content : content 
             //处理原有项目中的一些alias
-            // console.log(replaceAlias(content,filePath).slice(0,100))
             file.contents = new Buffer( replaceAlias(content,filePath) )          
         }))
-        // .pipe(eslint())
-        // .pipe(eslint.format())
         .pipe(gulp.dest(DIST))
 }
 gulp.task('js', f_js)
@@ -179,7 +179,7 @@ const f_img = done => {
 gulp.task('img', f_img)
 
 /* 清除dist目录 */
-gulp.task('clean', done => gulp.src([DIST + '*', `!${DIST}miniprogram_npm`], { read: false, allowEmpty: true }).pipe(clean()))
+gulp.task('clean', done => gulp.src(CLEAN, { read: false, allowEmpty: true }).pipe(clean()))
 
 /* zip */
 
@@ -193,7 +193,7 @@ gulp.task('watch', done => {
     gulp.watch(IMG, f_img)
 })
 
-gulp.task('build', gulp.series('clean', gulp.parallel('wxml', 'json', 'sass', 'js', 'wxs', 'img')))
+gulp.task('build', gulp.series('clean', gulp.parallel('wxml', 'json', 'sass', 'js', 'wxs', 'img'),'modules'))
 
 gulp.task('dev', gulp.series('clean', gulp.parallel('wxml', 'json', 'sass', 'js', 'wxs', 'img'), 'watch'))
 
@@ -221,18 +221,21 @@ gulp.task('new', done => {
 
     let Path = SRC.split('**')[0] + currentPath
     let baseName = p || c || 'index'
-    let tempPath = SRC.split('**')[0] + (p ? 'pages/.template/*' : 'component/.template/*')
+    let tempPath = p ? './.template/page/*' : './.template/component/*'
     let stream = gulp.src(tempPath)
     let words = p ? 'page' : 'component'
     console.log(Path + '/' + baseName)
     console.log(`>>>>正在创建${words}`)
     //将页面路径写入app.json
     if (p) {
-        gulp.src('./src/app.json')
-            .pipe(replace(/"pages":\[([^\]])*\]/, ($1) => {
-                return $1.replace(/\]/, `\t,"${Path.split(SRCROOT + "/").pop()}/${baseName}"\n\r\]`)
+        console.log(p)
+        gulp.src(`./${SRCROOT}/app.json`)
+            .pipe(tap(file =>{
+                let content = JSON.parse(String(file.contents))
+                content.pages.push(`${Path.split(SRCROOT + "/").pop()}/${baseName}`)
+                file.contents = new Buffer(JSON.stringify(content,undefined,'\t'))
             }))
-            .pipe(gulp.dest('./src/'))
+            .pipe(gulp.dest(`./${SRCROOT}/`))
     }
     if (n) {
         stream = stream.pipe(rename({

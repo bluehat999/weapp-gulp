@@ -1,22 +1,38 @@
 {
-  "name": "gulpmini",
-  "version": "1.0.0",
+  "name": "wxapp-gulp-workflow",
+  "version": "0.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "src/app.js",
+  "miniprogram": "dist",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "gulp dev && gulp modules",
+    "build": "gulp build && gulp modules"
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "del": "^4.1.1",
+
+  },
+  "jest": {
+    "modulePathIgnorePatterns": [
+      "node_modules",
+      "lib"
+    ]
+  },
+  "devDependencies": {
+    "@babel/core": "^7.4.5",
+    "@babel/preset-env": "^7.4.5",
     "gulp": "^4.0.2",
+    "gulp-babel": "^8.0.0",
+    "gulp-clean": "^0.4.0",
     "gulp-eslint": "^5.0.0",
     "gulp-notify": "^3.2.0",
     "gulp-plumber": "^1.2.1",
     "gulp-rename": "^1.4.0",
     "gulp-replace": "^1.0.0",
     "gulp-sass": "^4.0.2",
+    "gulp-tap": "^1.0.1",
     "minimist": "^1.2.0"
   }
 }
