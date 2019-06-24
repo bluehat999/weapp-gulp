@@ -2,19 +2,27 @@
 
 `tnpm i`
 
-`npm run build `
+`npm run dev `
 
-微信开发者工具中->工具->构建npm
+提供模板快速创建功能，见后面gulp new  
 
-`gulp lodash `处理构建后的npm小程序包，使小程序支持lodash
+可在gulpfile.js中用aliasWords配置js路径别名  
 
-`npm run dev` 或者 `gulp dev` 打开watch，自动监听文件
+
+
+优化了npm依赖的处理，精简了dist目录，提升了速度  
+
+
+
+TODO:    
+
+修复有时串行task执行后没变化（或删除），需要手动重新编译相关内容    
 
 
 
   项目地址：https://github.com/bluehat999/weapp-gulp
 
-  文章地址：
+  文章地址：https://www.cnblogs.com/mthz/p/weapp-gulp.html
 
 
 
@@ -40,9 +48,7 @@ gulp wxml
 
 gulp sass
 
-gulp modules    将node_modules复制到小程序dist根目录，从而方便开发者工具构建npm
-
-gulp lodash    修复微信小程序不能使用lodash的问题，在build后开发者工具中构建过Npm后使用
+gulp lodash    修复微信小程序不能使用lodash的问题，实质是修改编译后dist中的vendor.js文件
 
 gulp new -p pageName    在当前路径下新建一个page，路径自动加入app.json
 gulp new -np pageName   同上，但是page没有目录包裹

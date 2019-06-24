@@ -11,6 +11,12 @@ const path = require('path')
 const sass = require('gulp-sass')
 const minimist = require('minimist')
 
+const browserify = require('browserify');
+const buffer = require('gulp-buffer');
+const sourcemaps = require('gulp-sourcemaps');
+const babelify = require('babelify');
+
+
 const SRCROOT = 'src'
 const SRC = './src/**/'
 const DIST = './dist/'
@@ -24,7 +30,9 @@ const IMG = [`${SRC}*.{png,jpg,ico,svg,gif}`]
 const CLEAN = [DIST + '*', `!${DIST}miniprogram_npm`, `!${DIST}node_modules`]
 //存放variable和mixin的sass文件在被引用时直接导入，不引入dist目录中
 const DIRECTIMPORT = ['styles', 'font']
-const aliasWords = ['utils', 'config'] //alias的路径是相对SRCROOT的路径
+//alias的路径是相对SRCROOT的路径
+const aliasWords = ['utils', 'config','pages','component'] 
+
 
 const onError = function (err) {
     notify.onError({
@@ -38,10 +46,9 @@ const onError = function (err) {
 };
 
 /* 处理lodash与微信小程序配置不兼容问题 */
-const wxappLodash = (done) => {
-    const wxappNPM = 'miniprogram_npm/'
-    const lodashFile = `${DIST}${wxappNPM}lodash/index.js`
-    const oldRoot = "var root = freeGlobal || freeSelf || Function('return this')();"
+const wxappLodash = done => {
+    const vendorFile = `${DIST}utils/vendor.js`
+    const oldRoot = "var root=freeGlobal||freeSelf||Function('return this')();"
     const newRoot = `/**${oldRoot}**/ var root = {
         Array: Array,
         Date: Date,
@@ -57,11 +64,11 @@ const wxappLodash = (done) => {
         setInterval: setInterval,
         clearInterval: clearInterval
       };`
-    fs.exists(lodashFile, (ex) => {
+    fs.exists(vendorFile, (ex) => {
         if (ex) {
-            const lodash = gulp.src(lodashFile).pipe(tap(file => {
+            gulp.src(vendorFile).pipe(tap(file => {
                 file.contents = new Buffer(String(file.contents).replace(oldRoot,newRoot))
-            })).pipe(gulp.dest(lodashFile.replace('index.js','')))
+            })).pipe(gulp.dest(vendorFile.replace('vendor.js','')))
         }
     })
     done()
@@ -70,24 +77,26 @@ gulp.task('lodash',wxappLodash)
 
 const wxappModules = () =>{
     const modules = ['./node_modules/**/*','./package.json']
-    gulp.src([`${DIST}node_modules`,`${DIST}package.json`], { read: false, allowEmpty: true }).pipe(clean())
-    return gulp.src(modules, { since: gulp.lastRun(wxappModules) })
+    gulp.src([`${DIST}node_modules/**/*`,`${DIST}package.json`], { read: false, allowEmpty: true }).pipe(clean())
+    gulp.src(modules, { since: gulp.lastRun(wxappModules) })
     .pipe(plumber({ errorHandler: onError }))
     .pipe(gulp.dest(DIST+'/node_modules'))
+    done()
 }
 gulp.task('modules',gulp.series(wxappModules))
 
 /* 处理文件和图片 */
 
 const f_wxml = done => {
-    return gulp.src(WXML, { since: gulp.lastRun(f_wxml) })
+    gulp.src(WXML, { since: gulp.lastRun(f_wxml) })
         .pipe(plumber({ errorHandler: onError }))
         .pipe(gulp.dest(DIST))
+    done()
 }
 gulp.task('wxml', f_wxml)
 
 const f_sass = done => {
-    return gulp.src([...SASS,...DIRECTIMPORT.map(item => `!${SRC}${item}/**/*`)], 
+    gulp.src([...SASS,...DIRECTIMPORT.map(item => `!${SRC}${item}/**/*`)], 
                     { since: gulp.lastRun(f_sass) ,allowEmpty:true})
         .pipe(plumber({ errorHandler: onError }))
         .pipe(tap((file) => {
@@ -104,13 +113,15 @@ const f_sass = done => {
         .pipe(replace(/(\/\*\*\s{0,})(@.+)(\s{0,}\*\*\/)/g, ($1, $2, $3) => $3.replace(/\.scss/g, '.wxss')))
         .pipe(rename({ extname: '.wxss' }))
         .pipe(gulp.dest(DIST))
+    done()
 }
 gulp.task('sass', f_sass)
 
 const f_json = done => {
-    return gulp.src(_JSON, { since: gulp.lastRun(f_json) })
+    gulp.src(_JSON, { since: gulp.lastRun(f_json) })
         .pipe(plumber({ errorHandler: onError }))
         .pipe(gulp.dest(DIST))
+    done()
 }
 gulp.task('json', f_json)
 
@@ -127,7 +138,7 @@ const replaceAlias = (fileContent,filePath) => {
     return fileContent
 }
 const f_js = done => {
-    return gulp.src(JS, { since: gulp.lastRun(f_js) })
+    gulp.src(JS, { since: gulp.lastRun(f_js) })
         .pipe(plumber({ errorHandler: onError }))
         .pipe(tap((file) => {
             const filePath = path.dirname(file.path);
@@ -148,38 +159,56 @@ const f_js = done => {
             file.contents = new Buffer( replaceAlias(content,filePath) )          
         }))
         .pipe(gulp.dest(DIST))
+    done()
 }
 gulp.task('js', f_js)
 
+const f_vendor = done => {
+    gulp.src('src/utils/vendor.js', {read: false})
+      .pipe(tap(function (file) {
+        console.log(`bundling ${file.path}`);
+        file.contents = browserify(file.path, {
+          debug: true,
+          standalone: 'vendor'
+        })
+        .transform(babelify, { global: true,
+                     presets: ["@babel/preset-env"],
+                     plugins: ['@babel/plugin-transform-modules-commonjs'] })
+          .bundle();
+      }))
+      .pipe(buffer())
+      .pipe(sourcemaps.init({loadMaps: true}))
+      .pipe(sourcemaps.write('./'))
+      .pipe(gulp.dest(`${DIST}/utils`));  
+      done()
+  }
+gulp.task('vendor', gulp.series(f_vendor,'lodash'));
+
 const f_wxs = done => {
-    return gulp.src(WXS, { since: gulp.lastRun(f_wxs) })
+    gulp.src(WXS, { since: gulp.lastRun(f_wxs) })
         .pipe(plumber({ errorHandler: onError }))
         .pipe(babel({//处理原生微信小程序wxs基于ES5
             presets: ['@babel/preset-env']
         }))
         .pipe(rename({ extname: '.wxs' }))
         .pipe(gulp.dest(DIST))
+    done()
 }
 gulp.task('wxs', f_wxs)
 
 const f_img = done => {
-    return gulp.src(IMG, { since: gulp.lastRun(f_img) })
+    gulp.src(IMG, { since: gulp.lastRun(f_img) })
         .pipe(plumber({ errorHandler: onError }))
-        // .pipe(imagemin({
-        //     progressive: true,
-        //     svgoPlugins: [{
-        //         removeViewBox: false
-        //     }],
-        //     use: [pngquant({
-        //         quality: '100'
-        //     })]
-        // }))
         .pipe(gulp.dest(DIST))
+    done()
 }
 gulp.task('img', f_img)
 
 /* 清除dist目录 */
-gulp.task('clean', done => gulp.src(CLEAN, { read: false, allowEmpty: true }).pipe(clean()))
+gulp.task('clean', done => {
+    gulp.src(CLEAN, { read: false, allowEmpty: true }).pipe(clean())
+    done()
+})
 
 /* zip */
 
@@ -193,9 +222,9 @@ gulp.task('watch', done => {
     gulp.watch(IMG, f_img)
 })
 
-gulp.task('build', gulp.series('clean', gulp.parallel('wxml', 'json', 'sass', 'js', 'wxs', 'img'),'modules'))
+gulp.task('build', gulp.series('clean', gulp.parallel('wxml', 'json', 'sass', 'js', 'wxs', 'img'),'vendor'))
 
-gulp.task('dev', gulp.series('clean', gulp.parallel('wxml', 'json', 'sass', 'js', 'wxs', 'img'), 'watch'))
+gulp.task('dev', gulp.series('clean', gulp.parallel('wxml', 'json', 'sass', 'js', 'wxs', 'img'),'vendor', 'watch'))
 
 //使用模板新建component或者page
 gulp.task('new', done => {
@@ -256,6 +285,7 @@ gulp.task('new', done => {
             }
         })
     }
-    return stream.pipe(gulp.dest(Path))
+    stream.pipe(gulp.dest(Path))
+    done()
 })
 
